@@ -2,21 +2,21 @@ import re
 import sys
 from collections.abc import Callable, Iterable, Iterator
 import configparser
-from dataclasses import dataclass
+from dataclasses import dataclass, field, asdict
 from datetime import date, datetime, time, timedelta
 from itertools import pairwise
-from typing import NamedTuple, Self, TextIO
+from typing import ClassVar, NamedTuple, Self, TextIO
 from functools import partial
 
-
-class Timecode(NamedTuple):
-    _rx = re.compile(r"(\d+):(\d+):(\d+)[,\.](\d+)")
-    _rx2 = re.compile(rf"^{_rx.pattern} --> {_rx.pattern}$")
-    _milli_sep = ","
-    hours: int
-    minutes: int
-    seconds: int
-    milliseconds: int
+@dataclass(frozen=True, slots=True)
+class Timecode:
+    _rx: ClassVar[re.Pattern] = re.compile(r"(\d+):(\d+):(\d+)[,\.](\d+)")
+    _rx2: ClassVar[re.Pattern] = re.compile(rf"^{_rx.pattern} --> {_rx.pattern}$")
+    _milli_sep: ClassVar[str] = ","
+    hours: int = 0
+    minutes: int = 0
+    seconds: int = 0
+    milliseconds: int = 0
 
     @classmethod
     def from_string(cls, string: str) -> Self:
@@ -69,7 +69,7 @@ class Timecode(NamedTuple):
         )
 
     def as_timedelta_slow(self) -> timedelta:
-        return timedelta(**self._asdict())
+        return timedelta(**asdict(self))
 
     def as_timedelta_slower(self) -> timedelta:
         today = date.today()
@@ -239,9 +239,9 @@ class SubtitleFile:
             else:
                 super().__setitem__(key, val)
 
-
+@dataclass
 class AssFile:
-    property_name_map = (
+    property_name_map: ClassVar[tuple[tuple[str, str], ...]] = (
         ("effect", "Effect"),
         ("layer", "Layer"),
         ("margin_l", "MarginL"),
@@ -251,7 +251,7 @@ class AssFile:
         ("style", "Style"),
         # ("text", "Text")
     )
-    default_config = {
+    default_config: ClassVar[dict[str, dict[str, list[str]]]] = {
         "Script Info": {
             'ScriptType': ['v4.00+'],
             'PlayResX': ['384'],
@@ -267,9 +267,8 @@ class AssFile:
             "Format": ['Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text']
         }
     }
-    def __init__(self, config: dict|configparser.ConfigParser|None = None, entries: Iterable[AssEntry]|None = None):
-        self._config = config
-        self._entries = entries or []
+    config: dict|configparser.ConfigParser|None = None
+    entries: Iterable[AssEntry]|None = field(default_factory=list)
 
     @classmethod
     def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag|re.Pattern = None):
@@ -329,7 +328,7 @@ class AssFile:
     def dump_ass(self, buffer: TextIO, highlight_tag: HighlightTag = None):
         print("[Script Info]", file=buffer)
         print("; comments go here", file=buffer)
-        config = self._config or self.default_config
+        config = self.config or self.default_config
         if "Script Info" in config:
             for key, val in config["Script Info"].items():
                 print(f"{key}: {val[0]}", file=buffer)
@@ -344,7 +343,7 @@ class AssFile:
             print(f"Format: {config['Events']['Format'][0]}", file=buffer)
         fmt_keys = config["Events"]["Format"][0].split(", ")
         key_map = {key2: key1 for key1, key2 in self.property_name_map}
-        for entry in self._entries:
+        for entry in self.entries:
             vals = {key: getattr(entry, key_map[key]) for key in fmt_keys if key in key_map}
             vals["Start"] = str(entry.time_range[0])
             vals["End"] = str(entry.time_range[1])
