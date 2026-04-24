@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from itertools import pairwise
 from typing import NamedTuple, Self, TextIO
+from functools import partial
 
 
 class Timecode(NamedTuple):
@@ -46,6 +47,10 @@ class Timecode(NamedTuple):
     def from_timedelta(cls, td: timedelta) -> Self:
         newtime = (datetime.combine(date.today(), time()) + td).time()
         return cls.from_time(newtime)
+
+    @classmethod
+    def from_seconds(cls, seconds: int) -> Self:
+        return cls.from_timedelta(timedelta(seconds=seconds))
 
     def as_time(self) -> time:
         return time(
@@ -92,7 +97,7 @@ class Timecode(NamedTuple):
     #     else:
     #         return result.as_timedelta()
 
-    def __add__(self, other: Self | time | timedelta) -> Self | timedelta:
+    def __add__(self, other: Self | time | timedelta | str) -> Self | timedelta:
         me = datetime.combine(date.today(), self.as_time())
         if isinstance(other, time):
             other = type(self).from_time(other)
@@ -100,8 +105,15 @@ class Timecode(NamedTuple):
             other = other.as_timedelta()
         if isinstance(other, timedelta):
             return type(self).from_time((me + other).time())
+        if isinstance(other, str):
+            return str(self) + other
         raise TypeError(type(other))
         # return self.__math_op(operator.add, other)
+
+    def __radd__(self, other: Self | time | timedelta | str) -> Self | timedelta:
+        if isinstance(other, str):
+            return other + str(self)
+        return self + other
 
     def __sub__(self, other: Self | time | timedelta) -> Self | timedelta:
         me = datetime.combine(date.today(), self.as_time())
@@ -123,6 +135,8 @@ class SRTEntry:
     number: int
     time_range: tuple[Timecode, Timecode]
     text: str
+    highlight_word: str|None
+    highlight_idx: int|None
 
     @property
     def start(self):
@@ -132,6 +146,14 @@ class SRTEntry:
     def end(self):
         return self.time_range[1]
 
+    @property
+    def text_parts(self):
+        if self.highlight_word and self.highlight_idx:
+            return (
+                self.text[:highlight_idx[0]],
+                self.highlight_word,
+                self.text[self.highlight_idx+len(self.highlight_word):]
+            )
 
 def parse_srt(buffer: TextIO):
     # entries = []
@@ -270,7 +292,8 @@ if __name__ == "__main__":
         "-x",
         "--extend-trailing",
         nargs="*",
-        type=lambda n: timedelta(seconds=n),
+        type=lambda n: timedelta(seconds=float(n)),
+        # type=partial(timedelta, )
         metavar=("blank_threshold", "extend_by"),
         help="If the amount of time between the end of one title and the start of the next is greater than <blank_threshold> seconds (default: 1), "
         "then extend that title for <extend_by> seconds (or to the start of the next title, whichever is less, default: 1, "
