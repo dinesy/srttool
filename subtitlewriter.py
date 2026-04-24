@@ -1,6 +1,6 @@
 import re
 import sys
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 import configparser
 from dataclasses import dataclass, field, asdict
 from datetime import date, datetime, time, timedelta
@@ -84,7 +84,7 @@ class Timecode:
     def __hash__(self):
         return hash(str(self))
 
-    def __add__(self, other: Self | time | timedelta | str) -> Self | timedelta:
+    def __add__(self, other: Self | time | timedelta | str) -> Self | timedelta | str:
         me = datetime.combine(date.today(), self.as_time())
         if isinstance(other, time):
             other = type(self).from_time(other)
@@ -97,7 +97,7 @@ class Timecode:
         raise TypeError(type(other))
         # return self.__math_op(operator.add, other)
 
-    def __radd__(self, other: Self | time | timedelta | str) -> Self | timedelta:
+    def __radd__(self, other: Self | time | timedelta | str) -> Self | timedelta | str:
         if isinstance(other, str):
             return other + str(self)
         return self + other
@@ -161,11 +161,11 @@ class SubtitleFile:
     entries: Iterable[SubtitleEntry]
 
     @classmethod
-    def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag = None):
+    def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag|None = None):
         return cls(list(cls.parse_srt(buffer, highlight_tag)))
 
     @staticmethod
-    def parse_srt(buffer: TextIO, highlight_tag: HighlightTag = None):
+    def parse_srt(buffer: TextIO, highlight_tag: HighlightTag|None = None):
         # entries = []
         def new_entry(num, timecodes, text):
             if highlight_tag:
@@ -215,7 +215,7 @@ class SubtitleFile:
         # return entries
 
 
-    def dump_srt(self, buffer: TextIO, highlight_tag: HighlightTag = None):
+    def dump_srt(self, buffer: TextIO, highlight_tag: HighlightTag|None = None):
         for entry in self.entries:
             print(str(entry.number), file=buffer)
             print(f"{entry.start} --> {entry.end}", file=buffer)
@@ -271,14 +271,14 @@ class AssFile:
     entries: Iterable[AssEntry]|None = field(default_factory=list)
 
     @classmethod
-    def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag|re.Pattern = None):
+    def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag|re.Pattern|None = None):
         parser = configparser.ConfigParser(strict=False, dict_type=SubtitleFile.AppendDict, interpolation=None, delimiters=(":",))
         parser.optionxform = lambda o: o
         parser.read_file(buffer)
         return cls(parser, list(cls.parse_ass_events(parser["Events"], highlight_tag=highlight_tag)))
 
     @staticmethod
-    def parse_ass_events(events: dict, highlight_tag: HighlightTag|re.Pattern = None):
+    def parse_ass_events(events: Mapping, highlight_tag: HighlightTag|re.Pattern|None = None):
         # entries = []
         def new_entry(**params):
             properties = {
@@ -325,7 +325,7 @@ class AssFile:
                 start_times.add(entry.time_range[0])
                 yield entry
 
-    def dump_ass(self, buffer: TextIO, highlight_tag: HighlightTag = None):
+    def dump_ass(self, buffer: TextIO, highlight_tag: HighlightTag|None = None):
         print("[Script Info]", file=buffer)
         print("; comments go here", file=buffer)
         config = self.config or self.default_config
