@@ -75,8 +75,14 @@ class Timecode(NamedTuple):
         today = date.today()
         return datetime.combine(today, self.as_time()) - datetime.combine(today, time())
 
-    def __cmp__(self, other: Self):
-        return self.as_time().__cmp__(other.as_time())
+    def __lt__(self, other: Self):
+        return self.as_time().__lt__(other.as_time())
+
+    def __eq__(self, other: Self):
+        return self.as_time().__eq__(other.as_time())
+
+    def __hash__(self):
+        return hash(str(self))
 
     def __add__(self, other: Self | time | timedelta | str) -> Self | timedelta:
         me = datetime.combine(date.today(), self.as_time())
