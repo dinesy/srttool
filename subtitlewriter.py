@@ -49,7 +49,7 @@ class Timecode:
         return cls.from_time(newtime)
 
     @classmethod
-    def from_seconds(cls, seconds: int) -> Self:
+    def from_seconds(cls, seconds: float) -> Self:
         return cls.from_timedelta(timedelta(seconds=seconds))
 
     def as_time(self) -> time:
@@ -116,6 +116,21 @@ class Timecode:
     def __repr__(self):
         return f"{self.hours:02d}:{self.minutes:02d}:{self.seconds:02d}{self._milli_sep}{self.milliseconds:03d}"
 
+class TimeRange(NamedTuple):
+    start: Timecode
+    end: Timecode
+    @classmethod
+    def from_string(cls, string: str) -> TimeRange:
+        return cls(*Timecode.range_from_string(string))
+    @classmethod
+    def from_seconds(cls, start: float, end: float) -> TimeRange:
+        return cls(Timecode.from_seconds(start), Timecode.from_seconds(end))
+    @classmethod
+    def from_time(cls, start: time, end: time) -> TimeRange:
+        return cls(Timecode.from_time(start), Timecode.from_time(end))
+    @classmethod
+    def from_timedelta(cls, start: timedelta, end: timedelta) -> TimeRange:
+        return cls(Timecode.from_timedelta(start), Timecode.from_timedelta(end))
 
 @dataclass
 class SubtitleEntry:
