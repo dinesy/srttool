@@ -25,8 +25,21 @@ class TranscriptionWordType(BaseModel):
     start: float
     end: float
 
+    @classmethod
+    def merge_words(cls, word_1: Self, word_2: Self) -> Self:
+        if isinstance(word_1, cls) and isinstance(word_2, cls):
+            return cls(
+                word=word_1.word + word_2.word,
+                start=min(word_1.start, word_2.start),
+                end=max(word_1.end, word_2.end),
+            )
+        raise TypeError(f"Cannot merge words of type {type(word_1)} and {type(word_2)}")
+
+    def __add__(self, other: Self):
+        return self.merge_words(self, other)
+
 class TranscriptionBlank(TranscriptionWordType):
-    word: ClassVar[str] = ""
+    word: str = Field(default="", init=False, frozen=True)
 
 class TranscriptionWord(TranscriptionWordType):
     probability: float
@@ -51,9 +64,6 @@ class TranscriptionWord(TranscriptionWordType):
                     probability=this.probability
                 )
         raise TypeError(f"Incompatible merge types ({type(word_1)}, {type(word_2)})")
-
-    def __add__(self, other: TranscriptionWordType):
-        return self.merge_words(self, other)
 
 class TranscriptionSegment(BaseModel):
     id: int
