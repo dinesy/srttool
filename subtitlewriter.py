@@ -10,6 +10,7 @@ from functools import partial
 from abc import abstractclassmethod, abstractmethod
 
 from subtitles import SubtitleChunk, MultilineSubtitleChunk
+from transcribe import TranscriptionWord
 
 @dataclass(frozen=True, slots=True)
 class Timecode:
@@ -182,31 +183,61 @@ class HighlightTag(NamedTuple):
     open: str
     close: str
 
+Chunk = TypeVar("Chunk", SubtitleChunk, MultilineSubtitleChunk)
+
 @dataclass
 class SRTSubtitleFile:
     entries: Iterable[SRTSubtitleEntry]
 
     @classmethod
-    def from_whisper[Chunk: (SubtitleChunk, MultilineSubtitleChunk)](cls,
+    def from_whisper(cls, chunks: Iterator[Chunk], highlight_tag: HighlightTag|None = None) -> Self:
+        return cls(list(cls.parse_whisper(chunks, highlight_tag)))
+
+    @staticmethod
+    def parse_whisper(
         chunks: Iterator[Chunk],
         highlight_tag: HighlightTag|None = None,
-    ):
+    ) -> Generator[SRTSubtitleEntry]:
+        def real_words(items):
+            return [item for item in items if isinstance(item, TranscriptionWord)]
         def process_subtitle_chunks():
             counter = 1
             for chunk in chunks:
                 if highlight_tag is None:
                     time_range = TimeRange.from_seconds(chunk.start, chunk.end)
-                    text = " ".join([word.word for word in chunk.words])
-                    yield SRTSubtitleEntry(counter, time_range=time_range, text=text)
+                    line_chunks = chunk.lines if isinstance(chunk, MultilineSubtitleChunk) else [chunk]
+                    lines = [
+                        " ".join([word.word for word in real_words (line.items)]) for line in line_chunks
+                    ]
+                    text = "\n".join(lines)
+                    yield SRTSubtitleEntry(number=counter, time_range=time_range, text=text)
                     counter += 1
                 else:
-                    for i, word in enumerate(chunk.words):
-                        time_range = TimeRange.from_seconds(word.start, word.end)
-                        before = [word.word for word in chunk.words[:i-1]]
-                        after = [word.word for word in chunk.words[i+1:]]
-                        text = f"{' '.join(before)} {highlight_tag.open}{word}{highlight_tag.close} {' '.join(after)}"
-                        yield SRTSubtitleEntry(counter, time_range=time_range, text=text)
-                        counter += 1
+                    line_chunks = chunk.lines if isinstance(chunk, MultilineSubtitleChunk) else [chunk]
+                    before_text = ""
+                    after_lines = [
+                        " ".join(word.word for word in real_words (line.items))  for line in line_chunks[1:]
+                    ]
+                    for i, line in enumerate(line_chunks):
+                        after_text = ("\n" + "\n".join(after_lines)) if after_lines else ""
+                        for j, item in enumerate(line.items):
+                            time_range = TimeRange.from_seconds(item.start, item.end)
+                            if j and isinstance(line.items[j-1], TranscriptionWord):
+                                before_text += f"{line.items[j-1].word} "
+                            after = " ".join([item.word for item in real_words(line.items[j+1:])])
+                            if isinstance(item, TranscriptionWord):
+                                text = f"{before_text}{highlight_tag.open}{item.word}{highlight_tag.close} {after}{after_text}"
+                            else:
+                                text = f"{before_text}{after}{after_text}"
+                            yield SRTSubtitleEntry(counter, time_range=time_range, text=text)
+                            counter += 1
+                        if isinstance(line.items[-1], TranscriptionWord):
+                            before_text += f" {line.items[-1].word}\n"
+                        else:
+                            before_text += "\n"
+                        if after_lines:
+                            after_lines.pop(0)
+        yield from process_subtitle_chunks()
 
     @classmethod
     def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag|None = None):
