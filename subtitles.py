@@ -20,7 +20,7 @@ from pydantic import (
 )
 
 # from subtitlewriter import Timecode, SubtitleEntry, AssEntry, SubtitleFile, AssFile
-from transcribe import TranscriptionResult, TranscriptionSegment, TranscriptionWord
+from transcribe import TranscriptionResult, TranscriptionSegment, TranscriptionWordType, TranscriptionWord, TranscriptionBlank
 
 # P = ParamSpec("P")
 # R = TypeVar("R", bound=bool)
@@ -35,10 +35,10 @@ class SubtitleProcessor[**P](ABC):
 
     @classmethod
     @abstractmethod
-    def action(cls, *args: P.args, **kwargs: P.kwargs) -> Sequence[TranscriptionWord]: ...
+    def action(cls, *args: P.args, **kwargs: P.kwargs) -> Sequence[TranscriptionWordType]: ...
 
+    def transform_words(cls, words: Iterable[TranscriptionWordType]) -> Generator[TranscriptionWordType]:
     @classmethod
-    def transform_words(cls, words: Iterable[TranscriptionWord]) -> Generator[TranscriptionWord]:
         # if len(words) < 2:
         #     return words
         argcount = cls.test.__func__.__code__.co_argcount-1
@@ -61,9 +61,9 @@ class SubtitleProcessor[**P](ABC):
                 yield from current_words
                 break
 
+    def transform_words_inplace(cls, words: MutableSequence[TranscriptionWordType]):
 
     @classmethod
-    def transform_words_inplace(cls, words: MutableSequence[TranscriptionWord]):
         # if len(words) < 2:
         #     return words
         argcount = cls.test.__func__.__code__.co_argcount-1
@@ -83,12 +83,12 @@ class SubtitleProcessor[**P](ABC):
             i, j = i+1, j+1
             # yield last_word
 
-class StripWords[TranscriptionWord](SubtitleProcessor):
+class StripWords[TranscriptionWordType](SubtitleProcessor):
     @classmethod
-    def test(cls, word_1: TranscriptionWord) -> bool:
+    def test(cls, word_1: TranscriptionWordType) -> bool:
         return True
     @classmethod
-    def action(cls, word_1: TranscriptionWord) -> Sequence[TranscriptionWord]:
+    def action(cls, word_1: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
         return [word_1.model_copy(update={"word": word_1.word.strip()})]
 
 class FixCommaNumbers(SubtitleProcessor):
@@ -98,14 +98,14 @@ class FixCommaNumbers(SubtitleProcessor):
     rx2b = re.compile(r"^,\d+")
 
     @classmethod
-    def test(cls, word_1: TranscriptionWord, word_2: TranscriptionWord) -> bool:
+    def test(cls, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> bool:
         return bool(
             (cls.rx1a.search(word_1.word) and cls.rx1b.search(word_2.word)) or \
             (cls.rx2a.search(word_1.word) and cls.rx2b.search(word_2.word))
         )
 
     @classmethod
-    def action(cls, word_1: TranscriptionWord, word_2: TranscriptionWord) -> Sequence[TranscriptionWord]:
+    def action(cls, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
         return [word_1 + word_2]
     # def fix_comma_numbers(cls, ):
         # yield from cls.process_words(words, test, lambda w1, w2: [w1 + w2])
@@ -116,9 +116,9 @@ class SubtitleChunkBase(BaseModel):
     start: float
     end: float
 class SubtitleChunk(SubtitleChunkBase):
-    words: Sequence[TranscriptionWord]
+    words: Sequence[TranscriptionWordType]
     @classmethod
-    def with_words(cls, words: Sequence[TranscriptionWord]):
+    def with_words(cls, words: Sequence[TranscriptionWordType]):
         starts, ends = zip(*[(word.start, word.end) for word in words])
         return cls(start=min(starts), end=max(ends), words=words)
 class MultilineSubtitleChunk(SubtitleChunkBase):
@@ -128,7 +128,7 @@ class MultilineSubtitleChunk(SubtitleChunkBase):
         starts, ends = zip(*[(chunk.start, chunk.end) for chunk in chunks])
         return cls(start=min(starts), end=max(ends), lines=chunks)
 
-type TranscriptionPart = TranscriptionResult|TranscriptionSegment|Iterable[TranscriptionSegment|TranscriptionWord]
+type TranscriptionPart = TranscriptionResult|TranscriptionSegment|Iterable[TransciptionResult|TranscriptionSegment|TranscriptionWordType]
 @dataclass
 class SubtitleChunker:
     transcription: TranscriptionPart
@@ -152,7 +152,7 @@ class SubtitleChunker:
                             for proc in self.subtitle_processors:
                                 words = proc.transform_words(words)
                         yield from words
-                    elif isinstance(part, TranscriptionWord):
+                    elif isinstance(part, TranscriptionWordType):
                         yield part
         lines = []
         current_line = []
