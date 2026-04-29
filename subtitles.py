@@ -29,29 +29,24 @@ from transcribe import TranscriptionResult, TranscriptionSegment, TranscriptionW
 # type T = TranscriptionWord
 class SubtitleProcessor[**P](ABC):
 # class SubtitleProcessor[*Ts, **P = [tuple[*Ts]]](ABC):
-    @classmethod
     @abstractmethod
-    def test(cls, *args: P.args, **kwargs: P.kwargs) -> bool: ...
+    def test(self, *args: P.args, **kwargs: P.kwargs) -> bool: ...
 
-    @classmethod
     @abstractmethod
-    def action(cls, *args: P.args, **kwargs: P.kwargs) -> Sequence[TranscriptionWordType]: ...
+    def action(self, *args: P.args, **kwargs: P.kwargs) -> Sequence[TranscriptionWordType]: ...
 
-    def transform_words(cls, words: Iterable[TranscriptionWordType]) -> Generator[TranscriptionWordType]:
-    @classmethod
-        # if len(words) < 2:
-        #     return words
-        argcount = cls.test.__func__.__code__.co_argcount-1
-        if argcount != cls.action.__func__.__code__.co_argcount-1:
-            raise ValueError(f"test and action methods must have the same number of arguments: {argcount-1} != {cls.action.__func__.__code__.co_argcount-1}")
+    def transform_words(self, words: Iterable[TranscriptionWordType]) -> Generator[TranscriptionWordType]:
+        argcount = self.test.__func__.__code__.co_argcount-1
+        if argcount != self.action.__func__.__code__.co_argcount-1:
+            raise ValueError(f"test and action methods must have the same number of arguments: {argcount-1} != {self.action.__func__.__code__.co_argcount-1}")
         iwords = iter(words)
         current_words = deque()
         while True:
             try:
                 while len(current_words) < argcount:
                     current_words.append(next(iwords))
-                if cls.test(*current_words):
-                    result = cls.action(*current_words)
+                if self.test(*current_words):
+                    result = self.action(*current_words)
                     current_words.clear()
                     current_words.extend(result)
                     if len(current_words) < argcount:
@@ -61,27 +56,22 @@ class SubtitleProcessor[**P](ABC):
                 yield from current_words
                 break
 
-    def transform_words_inplace(cls, words: MutableSequence[TranscriptionWordType]):
-
-    @classmethod
-        # if len(words) < 2:
-        #     return words
-        argcount = cls.test.__func__.__code__.co_argcount-1
-        if argcount != cls.action.__func__.__code__.co_argcount-1:
-            raise ValueError(f"test and action methods must have the same number of arguments: {argcount-1} != {cls.action.__func__.__code__.co_argcount-1}")
+    def transform_words_inplace(self, words: MutableSequence[TranscriptionWordType]):
+        argcount = self.test.__func__.__code__.co_argcount-1
+        if argcount != self.action.__func__.__code__.co_argcount-1:
+            raise ValueError(f"test and action methods must have the same number of arguments: {argcount-1} != {self.action.__func__.__code__.co_argcount-1}")
         i, j = 0, argcount-1
         last_word = None
         while j < len(words):
             if last_word is not words[j]:
                 # protect against infinite loops (hopefully)
-                if cls.test(*words[i:j+1]):
-                    result = cls.action(*words[i:j+1])
+                if self.test(*words[i:j+1]):
+                    result = self.action(*words[i:j+1])
                     words[i:j+1] = result
                     if len(result) < argcount:
                         continue
             last_word = words[j]
             i, j = i+1, j+1
-            # yield last_word
 
 class StripWords[TranscriptionWordType](SubtitleProcessor):
     @classmethod
@@ -116,11 +106,17 @@ class SubtitleChunkBase(BaseModel):
     start: float
     end: float
 class SubtitleChunk(SubtitleChunkBase):
-    words: Sequence[TranscriptionWordType]
+    items: Sequence[TranscriptionWordType]
     @classmethod
-    def with_words(cls, words: Sequence[TranscriptionWordType]):
-        starts, ends = zip(*[(word.start, word.end) for word in words])
-        return cls(start=min(starts), end=max(ends), words=words)
+    def with_items(cls, items: Sequence[TranscriptionWordType]):
+        starts, ends = zip(*[(item.start, item.end) for item in items])
+        return cls(start=min(starts), end=max(ends), items=items)
+    @property
+    def words(self) -> Sequence[TranscriptionWord]:
+        return [word for word in self.items if isinstance(word, TranscriptionWord)]
+    def __getitem__(self, item):
+        return self.items[item]
+
 class MultilineSubtitleChunk(SubtitleChunkBase):
     lines: Sequence[SubtitleChunk]
     @classmethod
@@ -172,7 +168,7 @@ class SubtitleChunker:
                     ) or (
                         current_line_chars >= self.max_line_length
                     ) or self.strict_line_length:
-                        lines.append(SubtitleChunk.with_words(current_line))
+                        lines.append(SubtitleChunk.with_items(current_line))
                         current_line = []
                         current_line_chars = 0
                         if len(lines) == self.max_lines_per_chunk:
@@ -182,7 +178,7 @@ class SubtitleChunker:
                 word = next(words)
             except StopIteration:
                 if current_line:
-                    lines.append(SubtitleChunk.with_words(current_line))
+                    lines.append(SubtitleChunk.with_items(current_line))
                 if lines:
                     yield lines[0] if len(lines) == 1 else MultilineSubtitleChunk.with_chunks(lines)
                 break
