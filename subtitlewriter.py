@@ -1,11 +1,11 @@
 import re
 import sys
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 import configparser
 from dataclasses import dataclass, field, asdict
 from datetime import date, datetime, time, timedelta
 from itertools import pairwise
-from typing import runtime_checkable, ClassVar, NamedTuple, Protocol, Self, TextIO
+from typing import runtime_checkable, ClassVar, NamedTuple, Protocol, Self, TextIO, TypeVar
 from functools import partial
 from abc import abstractclassmethod, abstractmethod
 
@@ -82,8 +82,8 @@ class Timecode:
     def __lt__(self, other: Self):
         return self.as_time().__lt__(other.as_time())
 
-    def __eq__(self, other: Self):
-        return self.as_time().__eq__(other.as_time())
+    def __eq__(self, other: object):
+        return isinstance(other, type(self)) and self.as_time().__eq__(other.as_time())
 
     def __hash__(self):
         return hash(str(self))
@@ -124,16 +124,16 @@ class TimeRange(NamedTuple):
     start: Timecode
     end: Timecode
     @classmethod
-    def from_string(cls, string: str) -> TimeRange:
+    def from_string(cls, string: str) -> Self:
         return cls(*Timecode.range_from_string(string))
     @classmethod
-    def from_seconds(cls, start: float, end: float) -> TimeRange:
+    def from_seconds(cls, start: float, end: float) -> Self:
         return cls(Timecode.from_seconds(start), Timecode.from_seconds(end))
     @classmethod
-    def from_time(cls, start: time, end: time) -> TimeRange:
+    def from_time(cls, start: time, end: time) -> Self:
         return cls(Timecode.from_time(start), Timecode.from_time(end))
     @classmethod
-    def from_timedelta(cls, start: timedelta, end: timedelta) -> TimeRange:
+    def from_timedelta(cls, start: timedelta, end: timedelta) -> Self:
         return cls(Timecode.from_timedelta(start), Timecode.from_timedelta(end))
 
 @runtime_checkable
@@ -161,7 +161,7 @@ class SRTSubtitleEntry(SubtitleEntry):
     highlight_idx: int|None = None
 
     @property
-    def text_parts(self) -> tuple[str, str, str]:
+    def text_parts(self) -> tuple[str, str, str]|None:
         if None not in (self.highlight_word, self.highlight_idx):
             return (
                 self.text[:self.highlight_idx],
@@ -240,11 +240,11 @@ class SRTSubtitleFile:
         yield from process_subtitle_chunks()
 
     @classmethod
-    def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag|None = None):
+    def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag|None = None) -> Self:
         return cls(list(cls.parse_srt(buffer, highlight_tag)))
 
     @staticmethod
-    def parse_srt(buffer: TextIO, highlight_tag: HighlightTag|None = None):
+    def parse_srt(buffer: TextIO, highlight_tag: HighlightTag|None = None) -> Generator[SRTSubtitleEntry]:
         # entries = []
         def new_entry(num, timecodes, text):
             if highlight_tag:
@@ -294,7 +294,7 @@ class SRTSubtitleFile:
         # return entries
 
 
-    def dump_srt(self, buffer: TextIO = None, highlight_tag: HighlightTag|None = None):
+    def dump_srt(self, buffer: TextIO|None = None, highlight_tag: HighlightTag|None = None):
         for entry in self.entries:
             print(str(entry.number), file=buffer)
             print(f"{entry.start} --> {entry.end}", file=buffer)
