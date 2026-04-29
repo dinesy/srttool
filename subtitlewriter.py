@@ -5,8 +5,11 @@ import configparser
 from dataclasses import dataclass, field, asdict
 from datetime import date, datetime, time, timedelta
 from itertools import pairwise
-from typing import ClassVar, NamedTuple, Self, TextIO
+from typing import runtime_checkable, ClassVar, NamedTuple, Protocol, Self, TextIO
 from functools import partial
+from abc import abstractclassmethod, abstractmethod
+
+from subtitles import SubtitleChunk, MultilineSubtitleChunk
 
 @dataclass(frozen=True, slots=True)
 class Timecode:
@@ -132,24 +135,32 @@ class TimeRange(NamedTuple):
     def from_timedelta(cls, start: timedelta, end: timedelta) -> TimeRange:
         return cls(Timecode.from_timedelta(start), Timecode.from_timedelta(end))
 
+@runtime_checkable
 @dataclass
-class SubtitleEntry:
+class SubtitleEntry(Protocol):
     number: int
-    time_range: tuple[Timecode, Timecode]
+    time_range: TimeRange
     text: str
+
+    @property
+    def start(self) -> Timecode:
+        return self.time_range.start
+
+    @property
+    def end(self) -> Timecode:
+        return self.time_range.end
+
+    @property
+    @abstractmethod
+    def text_parts(self) -> tuple[str, str, str]: ...
+
+@dataclass
+class SRTSubtitleEntry(SubtitleEntry):
     highlight_word: str|None = None
     highlight_idx: int|None = None
 
     @property
-    def start(self):
-        return self.time_range[0]
-
-    @property
-    def end(self):
-        return self.time_range[1]
-
-    @property
-    def text_parts(self):
+    def text_parts(self) -> tuple[str, str, str]:
         if None not in (self.highlight_word, self.highlight_idx):
             return (
                 self.text[:self.highlight_idx],
@@ -172,8 +183,30 @@ class HighlightTag(NamedTuple):
     close: str
 
 @dataclass
-class SubtitleFile:
-    entries: Iterable[SubtitleEntry]
+class SRTSubtitleFile:
+    entries: Iterable[SRTSubtitleEntry]
+
+    @classmethod
+    def from_whisper[Chunk: (SubtitleChunk, MultilineSubtitleChunk)](cls,
+        chunks: Iterator[Chunk],
+        highlight_tag: HighlightTag|None = None,
+    ):
+        def process_subtitle_chunks():
+            counter = 1
+            for chunk in chunks:
+                if highlight_tag is None:
+                    time_range = TimeRange.from_seconds(chunk.start, chunk.end)
+                    text = " ".join([word.word for word in chunk.words])
+                    yield SRTSubtitleEntry(counter, time_range=time_range, text=text)
+                    counter += 1
+                else:
+                    for i, word in enumerate(chunk.words):
+                        time_range = TimeRange.from_seconds(word.start, word.end)
+                        before = [word.word for word in chunk.words[:i-1]]
+                        after = [word.word for word in chunk.words[i+1:]]
+                        text = f"{' '.join(before)} {highlight_tag.open}{word}{highlight_tag.close} {' '.join(after)}"
+                        yield SRTSubtitleEntry(counter, time_range=time_range, text=text)
+                        counter += 1
 
     @classmethod
     def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag|None = None):
@@ -190,8 +223,8 @@ class SubtitleFile:
                     if highlight_end is not None:
                         word = text[highlight_start+len(highlight_tag.open):highlight_end]
                         new_text = text[:highlight_start] + word + text[highlight_end+len(highlight_tag.close):]
-                        return SubtitleEntry(num, timecodes, new_text, word, highlight_start)
-            return SubtitleEntry(num, timecodes, text)
+                        return SRTSubtitleEntry(num, timecodes, new_text, word, highlight_start)
+            return SRTSubtitleEntry(num, timecodes, text)
         i = 0
         error = False
         num, timecodes, text = (None, None, [])
@@ -199,7 +232,7 @@ class SubtitleFile:
             line = line.strip()
             if not line:
                 if not error:
-                    # entries.append(SubtitleEntry(num, timecodes, "\n".join(text)))
+                    # entries.append(SRTSubtitleEntry(num, timecodes, "\n".join(text)))
                     yield new_entry(num, timecodes, "\n".join(text))
                 i = 0
                 error = False
@@ -230,7 +263,7 @@ class SubtitleFile:
         # return entries
 
 
-    def dump_srt(self, buffer: TextIO, highlight_tag: HighlightTag|None = None):
+    def dump_srt(self, buffer: TextIO = None, highlight_tag: HighlightTag|None = None):
         for entry in self.entries:
             print(str(entry.number), file=buffer)
             print(f"{entry.start} --> {entry.end}", file=buffer)
