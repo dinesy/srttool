@@ -274,19 +274,6 @@ class SRTSubtitleFile:
                 print(entry.text, file=buffer)
             print("", file=buffer)
 
-    class AppendDict(dict):
-        def __setitem__(self, key, val):
-            if key in self:
-                if isinstance(self[key], list):
-                    if isinstance(val, list):
-                        self[key].extend(val)
-                    # else:
-                    #     self[key].append(val)
-                else:
-                    super().__setitem__(key, [self[key], val])
-            else:
-                super().__setitem__(key, val)
-
 @dataclass
 class AssFile:
     property_name_map: ClassVar[tuple[tuple[str, str], ...]] = (
@@ -318,9 +305,22 @@ class AssFile:
     config: dict|configparser.ConfigParser|None = None
     entries: Iterable[AssEntry]|None = field(default_factory=list)
 
+    class AppendDict(dict):
+        def __setitem__(self, key, val):
+            if key in self:
+                if isinstance(self[key], list):
+                    if isinstance(val, list):
+                        self[key].extend(val)
+                    # else:
+                    #     self[key].append(val)
+                else:
+                    super().__setitem__(key, [self[key], val])
+            else:
+                super().__setitem__(key, val)
+
     @classmethod
     def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag|re.Pattern|None = None):
-        parser = configparser.ConfigParser(strict=False, dict_type=SubtitleFile.AppendDict, interpolation=None, delimiters=(":",))
+        parser = configparser.ConfigParser(strict=False, dict_type=cls.AppendDict, interpolation=None, delimiters=(":",))
         parser.optionxform = lambda o: o
         parser.read_file(buffer)
         return cls(parser, list(cls.parse_ass_events(parser["Events"], highlight_tag=highlight_tag)))
@@ -350,14 +350,14 @@ class AssFile:
                         if highlight_end is not None:
                             word = text[highlight_start+len(highlight_tag.open):highlight_end]
                             new_text = text[:highlight_start] + word + text[highlight_end+len(highlight_tag.close):]
-                            return AssEntry(**properties, text=new_text, highlight_word=word, highlight_idx=highlight_start)
+                            return AssEntry(**properties, text=new_text)#, highlight_word=word, highlight_idx=highlight_start)
                 elif isinstance(highlight_tag, re.Pattern):
                     if {"open", "close", "word"} - highlight_tag.groupindex.keys():
                         raise ValueError("RegEx must have groups for 'open', 'close', and 'word'")
                     srch = highlight_tag.search(text)
                     if srch:
                         new_text = text[:srch.start()] + srch["word"] + text[srch.end():]
-                        return AssEntry(**properties, text=new_text, highlight_word=srch["word"], highlight_idx=srch.start())
+                        return AssEntry(**properties, text=new_text)#, highlight_word=srch["word"], highlight_idx=srch.start())
                     # else:
                     #     num = properties["number"]
                     #     tm = properties["time_range"]
