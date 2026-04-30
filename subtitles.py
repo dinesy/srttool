@@ -73,7 +73,7 @@ class SubtitleProcessor[**P](ABC):
             last_word = words[j]
             i, j = i+1, j+1
 
-class StripWords[TranscriptionWordType](SubtitleProcessor):
+class StripWords(SubtitleProcessor):
     @classmethod
     def test(cls, word_1: TranscriptionWordType) -> bool:
         return True
@@ -82,10 +82,10 @@ class StripWords[TranscriptionWordType](SubtitleProcessor):
         return [word_1.model_copy(update={"word": word_1.word.strip()})]
 
 class FixCommaNumbers(SubtitleProcessor):
-    rx1a = re.compile(r"\d+,$")
-    rx1b = re.compile(r"^\d+")
-    rx2a = re.compile(r"\d+$")
-    rx2b = re.compile(r"^,\d+")
+    rx1a: re.Pattern = re.compile(r"\d+,$")
+    rx1b: re.Pattern = re.compile(r"^\d+")
+    rx2a: re.Pattern = re.compile(r"\d+$")
+    rx2b: re.Pattern = re.compile(r"^,\d+")
 
     @classmethod
     def test(cls, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> bool:
@@ -124,7 +124,7 @@ class MultilineSubtitleChunk(SubtitleChunkBase):
         starts, ends = zip(*[(chunk.start, chunk.end) for chunk in chunks])
         return cls(start=min(starts), end=max(ends), lines=chunks)
 
-type TranscriptionPart = TranscriptionResult|TranscriptionSegment|Iterable[TransciptionResult|TranscriptionSegment|TranscriptionWordType]
+type TranscriptionPart = TranscriptionResult|TranscriptionSegment|Iterable[TranscriptionResult|TranscriptionSegment|TranscriptionWordType]
 @dataclass
 class SubtitleChunker:
     transcription: TranscriptionPart
