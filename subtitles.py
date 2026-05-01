@@ -13,6 +13,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    PrivateAttr,
     SerializeAsAny,
     TypeAdapter,
     computed_field,
@@ -92,6 +93,11 @@ class SubtitleChunkBase(BaseModel):
     id: int = 0
     start: float
     end: float
+    @property
+    def duration(self):
+        return self.end - self.start
+
+type IntSlice = slice[int|None, int|None, int|None]
 class SubtitleChunk(SubtitleChunkBase):
     items: MutableSequence[TranscriptionWordType]
     @classmethod
@@ -101,15 +107,106 @@ class SubtitleChunk(SubtitleChunkBase):
     @property
     def words(self) -> MutableSequence[TranscriptionWord]:
         return [word for word in self.items if isinstance(word, TranscriptionWord)]
-    def __getitem__(self, item):
-        return self.items[item]
+    def __getitem__(self, key: int|IntSlice) -> TranscriptionWordType|Sequence[TranscriptionWordType]:
+        return self.items[key]
+    def __setitem__(self, key: int|IntSlice, value: TranscriptionWordType|Sequence[TranscriptionWordType]):
+        self.items[key] = value
+    def __delitem__(self, key: int|IntSlice):
+        del self.items[key]
+    def __len__(self):
+        return len(self.items)
 
 class MultilineSubtitleChunk(SubtitleChunkBase):
-    lines: Sequence[SubtitleChunk]
+    @dataclass
+    class IndexMap:
+        one2two: list[tuple[int, int]]
+        two2one: dict[tuple[int, int], int]
+        len: int
+        @classmethod
+        def from_lines(cls, lines: Sequence[SubtitleChunk]):
+            one2two = [(i, j) for i, line in enumerate(lines) for j in range(len(line.words))]
+            two2one = {item: i for i, item in enumerate(one2two)}
+            return cls(one2two=one2two, two2one=two2one, len=len(one2two))
+    lines: MutableSequence[SubtitleChunk]
+    _item_index_map: IndexMap = PrivateAttr()
     @classmethod
     def with_chunks(cls, chunks: MutableSequence[SubtitleChunk]):
         starts, ends = zip(*[(chunk.start, chunk.end) for chunk in chunks])
         return cls(start=min(starts), end=max(ends), lines=chunks)
+    def _populate_index_map(self):
+        self._item_index_map = self.IndexMap.from_lines(self.lines)
+    def __getitem__(self, key: int|tuple[int, int]|IntSlice) -> TranscriptionWordType|Sequence[TranscriptionWordType]|Sequence[Sequence[TranscriptionWordType]]:
+        if isinstance(key, int):
+            i, j = self._item_index_map.one2two[key]
+            return self.lines[i][j]
+        if isinstance(key, tuple):
+            return self.lines[key[0]][key[1]]
+        if isinstance(key, slice):
+            coords = self._item_index_map.one2two[key]
+            groups = {}
+            for i, j in coords:
+                groups.setdefault(i, []).append(j)
+            return [[self.lines[i][j] for j in sorted(group)] for i, group in sorted(groups.items())]
+    def __setitem__(self,
+        key: int|tuple[int, int]|IntSlice,
+        value: TranscriptionWordType|Sequence[TranscriptionWordType]|Sequence[Sequence[TranscriptionWordType]],
+    ):
+        if isinstance(key, (int, tuple)) and not isinstance(value, TranscriptionWordType):
+            raise TypeError("value must be a TranscriptionWordType when key is an int or tuple")
+        if isinstance(key, int):
+            i, j = self._item_index_map.one2two[key]
+            self.lines[i][j] = value
+        if isinstance(key, tuple):
+            self.lines[key[0]][key[1]] = value
+        if isinstance(key, slice):
+            coords = self._item_index_map.one2two[key]
+            if isinstance(value, Sequence):
+                coord_len = len(coords)
+                val_len = len(value)
+                if coord_len <= val_len:
+                    for (i, j), item in zip(coords, value):
+                        self.lines[i][j] = item
+                    if coord_len < val_len:
+                        i, j = coords[-1]
+                        self.lines[i][j:j] = value[coord_len:]
+                else:
+                    for (i, j), item in zip(coords[:val_len], value):
+                        self.lines[i][j] = item
+                    for (i, j) in reversed(coords[val_len:]):
+                        del self.lines[i][j]
+                        if not self.lines[i].items:
+                            del self.lines[i]
+            else:
+                for i, j in coords:
+                    self.lines[i][j] = value
+
+        self._populate_index_map()
+        self.start = self.lines[0].items[0].start
+        self.end = self.lines[-1].items[-1].end
+
+    def __delitem__(self, key: int|IntSlice):
+        if isinstance(key, int):
+            coords = [self._item_index_map.one2two[key]]
+        elif isinstance(key, tuple):
+            coords = [key]
+        elif isinstance(key, slice):
+            coords = self._item_index_map.one2two[key]
+        else:
+            raise TypeError(f"Invalid key type: {type(key)}")
+
+        for (i, j) in reversed(coords):
+            del self.lines[i][j]
+            if not self.lines[i].items:
+                del self.lines[i]
+
+        self._populate_index_map()
+        self.start = self.lines[0].items[0].start
+        self.end = self.lines[-1].items[-1].end
+
+    def __len__(self):
+        return sum([len(chunk) for chunk in self.lines])
+
+
 
 type TranscriptionPart = TranscriptionResult|TranscriptionSegment|Iterable[TranscriptionResult|TranscriptionSegment|TranscriptionWordType]
 @dataclass
@@ -120,8 +217,64 @@ class SubtitleChunker:
     # max_chars_per_line: int|None = None
     max_lines_per_chunk: int = 1
     strict_line_length: bool = True
-    subtitle_processors: Sequence[SubtitleProcessor] = field(default_factory=[])
-    def chunks(self) -> Generator[SubtitleChunk]|Generator[MultilineSubtitleChunk]:
+    subtitle_preprocessors: Sequence[SubtitleProcessor] = field(default_factory=list)
+    chunk_preprocessors: Sequence[SubtitleProcessor] = field(default_factory=list)
+    def chunks(self) -> Generator[SubtitleChunk|MultilineSubtitleChunk]:
+        if isinstance(self.transcription, TranscriptionResult):
+            segments = self.transcription.segments
+        elif isinstance(self.transcription, TranscriptionSegment):
+            segments = [self.transcription]
+        elif isinstance(self.transcription, Iterable):
+            def breakout(item):
+                if isinstance(item, TranscriptionResult):
+                    return item.segments
+                elif isinstance(item, TranscriptionSegment):
+                    return [item]
+                else:
+                    return []
+            segments = [i for item in self.transcription for i in breakout(item)]
+        else:
+            raise ValueError(f"Unexpected transcription type: {type(self.transcription)}")
+
+        def stream_chunks():
+            for i, segment in enumerate(segments):
+                lines = []
+                current_line = []
+                current_line_chars = 0
+                next_segment = segments[i+1] if i < len(segments)-1 else None
+                words = segment.words
+                if self.subtitle_preprocessors:
+                    for proc in self.subtitle_preprocessors:
+                        words = proc.transform_words(words)
+                for word in words:
+                    if (
+                        self.line_limit_is_chars and current_line_chars + len(word.word) >= self.max_line_length
+                    ) or len(current_line) >= self.max_line_length:
+                        if (
+                            not self.line_limit_is_chars
+                        ) or (
+                            current_line_chars >= self.max_line_length
+                        ) or self.strict_line_length:
+                            lines.append(SubtitleChunk.with_items(current_line))
+                            current_line = []
+                            current_line_chars = 0
+                            if len(lines) == self.max_lines_per_chunk:
+                                yield lines[0] if len(lines) == 1 else MultilineSubtitleChunk.with_chunks(lines)
+                                lines = []
+                    current_line.append(word)
+                if current_line:
+                    lines.append(SubtitleChunk.with_items(current_line))
+                if lines:
+                    yield lines[0] if len(lines) == 1 else MultilineSubtitleChunk.with_chunks(lines)
+
+        output = stream_chunks()
+        if self.chunk_preprocessors:
+            for proc in self.chunk_preprocessors:
+                output = proc.transform_words(output)
+
+        yield from output
+
+    def chunks_ignore_segments(self) -> Generator[SubtitleChunk]|Generator[MultilineSubtitleChunk]:
         def iter_words(top_part: TranscriptionPart):
             if isinstance(top_part, TranscriptionResult):
                 top_part = top_part.segments
@@ -131,8 +284,8 @@ class SubtitleChunker:
                 for part in top_part:
                     if isinstance(part, TranscriptionSegment):
                         words = part.words
-                        if self.subtitle_processors:
-                            for proc in self.subtitle_processors:
+                        if self.subtitle_preprocessors:
+                            for proc in self.subtitle_preprocessors:
                                 words = proc.transform_words(words)
                         yield from words
                     elif isinstance(part, TranscriptionWordType):
