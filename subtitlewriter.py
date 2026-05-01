@@ -136,9 +136,12 @@ class TimeRange(NamedTuple):
     def from_timedelta(cls, start: timedelta, end: timedelta) -> Self:
         return cls(Timecode.from_timedelta(start), Timecode.from_timedelta(end))
 
-@runtime_checkable
+class HighlightTag(NamedTuple):
+    open: str
+    close: str
+
 @dataclass
-class SubtitleEntry(Protocol):
+class SubtitleEntry:
     number: int
     time_range: TimeRange
     text: str
@@ -151,9 +154,6 @@ class SubtitleEntry(Protocol):
     def end(self) -> Timecode:
         return self.time_range.end
 
-    @property
-    @abstractmethod
-    def text_parts(self) -> tuple[str, str, str]: ...
 
 @dataclass
 class SRTSubtitleEntry(SubtitleEntry):
@@ -161,8 +161,12 @@ class SRTSubtitleEntry(SubtitleEntry):
     highlight_idx: int|None = None
 
     @property
+    def has_highlight(self) -> bool:
+        return not (self.highlight_word is None or self.highlight_idx is None)
+
+    @property
     def text_parts(self) -> tuple[str, str, str]|None:
-        if None not in (self.highlight_word, self.highlight_idx):
+        if self.has_highlight:
             return (
                 self.text[:self.highlight_idx],
                 self.highlight_word,
@@ -178,26 +182,21 @@ class AssEntry(SubtitleEntry):
     margin_v: int = 0
     name: str|None = None
     style: str = "Default"
-
-class HighlightTag(NamedTuple):
-    open: str
-    close: str
+    highlight_word: str|None = None
+    highlight_idx: int|None = None
 
 Chunk = TypeVar("Chunk", SubtitleChunk, MultilineSubtitleChunk)
 
 @dataclass
-class SRTSubtitleFile:
-    entries: Iterable[SRTSubtitleEntry]
+class SubtitleFile[T: SubtitleEntry = SubtitleEntry]:
+    entry_class: ClassVar[type] = SubtitleEntry
+    entries: Iterable[T]
 
     @classmethod
-    def from_subtitles(cls, chunks: Iterator[Chunk], highlight_tag: HighlightTag|None = None) -> Self:
-        return cls(list(cls.parse_subtitles(chunks, highlight_tag)))
-
-    @staticmethod
-    def parse_subtitles(
+    def parse_subtitles(cls,
         chunks: Iterator[Chunk],
         highlight_tag: HighlightTag|None = None,
-    ) -> Generator[SRTSubtitleEntry]:
+    ) -> Generator[T]:
         def real_words(items):
             return [item for item in items if isinstance(item, TranscriptionWord)]
         def process_subtitle_chunks():
@@ -210,7 +209,7 @@ class SRTSubtitleFile:
                         " ".join([word.word for word in real_words (line.items)]) for line in line_chunks
                     ]
                     text = "\n".join(lines)
-                    yield SRTSubtitleEntry(number=counter, time_range=time_range, text=text)
+                    yield cls.entry_class(number=counter, time_range=time_range, text=text)
                     counter += 1
                 else:
                     line_chunks = chunk.lines if isinstance(chunk, MultilineSubtitleChunk) else [chunk]
@@ -229,7 +228,7 @@ class SRTSubtitleFile:
                                 text = f"{before_text}{highlight_tag.open}{item.word}{highlight_tag.close} {after}{after_text}"
                             else:
                                 text = f"{before_text}{after}{after_text}"
-                            yield SRTSubtitleEntry(counter, time_range=time_range, text=text)
+                            yield cls.entry_class(counter, time_range=time_range, text=text)
                             counter += 1
                         if isinstance(line.items[-1], TranscriptionWord):
                             before_text += f" {line.items[-1].word}\n"
@@ -238,6 +237,12 @@ class SRTSubtitleFile:
                         if after_lines:
                             after_lines.pop(0)
         yield from process_subtitle_chunks()
+
+@dataclass
+class SRTSubtitleFile(SubtitleFile[SRTSubtitleEntry]):
+    @classmethod
+    def from_subtitles(cls, chunks: Iterator[Chunk], highlight_tag: HighlightTag|None = None) -> Self:
+        return cls(list(cls.parse_subtitles(chunks, highlight_tag)))
 
     @classmethod
     def from_text(cls, buffer: TextIO, highlight_tag: HighlightTag|None = None) -> Self:
@@ -298,7 +303,7 @@ class SRTSubtitleFile:
         for entry in self.entries:
             print(str(entry.number), file=buffer)
             print(f"{entry.start} --> {entry.end}", file=buffer)
-            if None not in (highlight_tag, entry.highlight_word, entry.highlight_idx):
+            if isinstance(entry, SRTSubtitleEntry) and highlight_tag is not None:
                 before, word, after = entry.text_parts
                 print(before + highlight_tag.open + word + highlight_tag.close + after, file=buffer)
             else:
