@@ -1,11 +1,12 @@
 from abc import ABC, ABCMeta, abstractclassmethod, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
+from inspect import signature
 
 import re
 
 from collections.abc import Callable, Generator, Iterable, Iterator, MutableSequence, Sequence
-from typing import cast, Generic, NamedTuple, Self, TextIO, TypeVar, ParamSpec, Protocol
+from typing import cast, overload, Generic, NamedTuple, Self, TextIO, TypeVar, ParamSpec, Protocol
 
 
 from pydantic import (
@@ -30,8 +31,8 @@ class SubtitleProcessor[**P, T](ABC):
     def action(self, *args: P.args, **kwargs: P.kwargs) -> Sequence[T]: ...
 
     def transform_words(self, words: Iterable[T]) -> Generator[T]:
-        argcount = self.test.__func__.__code__.co_argcount-1
-        if argcount != self.action.__func__.__code__.co_argcount-1:
+        argcount = len(signature(self.test).parameters)
+        if argcount != len(signature(self.action).parameters):
             raise ValueError(f"test and action methods must have the same number of arguments: {argcount-1} != {self.action.__func__.__code__.co_argcount-1}")
         iwords = iter(words)
         current_words = deque()
@@ -149,7 +150,6 @@ class SubtitleChunkBase(BaseModel):
     def duration(self):
         return self.end - self.start
 
-type IntSlice = slice[int|None, int|None, int|None]
 class SubtitleChunk(SubtitleChunkBase):
     items: MutableSequence[TranscriptionWordType]
     @classmethod
@@ -159,11 +159,16 @@ class SubtitleChunk(SubtitleChunkBase):
     @property
     def words(self) -> MutableSequence[TranscriptionWord]:
         return [word for word in self.items if isinstance(word, TranscriptionWord)]
-    def __getitem__(self, key: int|IntSlice) -> TranscriptionWordType|Sequence[TranscriptionWordType]:
+    @overload
+    def __getitem__(self, key: int) -> TranscriptionWordType: ...
+    @overload
+    def __getitem__(self, key: slice) -> Sequence[TranscriptionWordType]: ...
+    def __getitem__(self, key: int|slice) -> TranscriptionWordType|Sequence[TranscriptionWordType]:
         return self.items[key]
-    def __setitem__(self, key: int|IntSlice, value: TranscriptionWordType|Sequence[TranscriptionWordType]):
+    def __setitem__(self, key, value):
         self.items[key] = value
-    def __delitem__(self, key: int|IntSlice):
+        return
+    def __delitem__(self, key: int|slice):
         del self.items[key]
     def __len__(self):
         return len(self.items)
@@ -187,7 +192,13 @@ class MultilineSubtitleChunk(SubtitleChunkBase):
         return cls(start=min(starts), end=max(ends), lines=chunks)
     def _populate_index_map(self):
         self._item_index_map = self.IndexMap.from_lines(self.lines)
-    def __getitem__(self, key: int|tuple[int, int]|IntSlice) -> TranscriptionWordType|Sequence[TranscriptionWordType]|Sequence[Sequence[TranscriptionWordType]]:
+    @overload
+    def __getitem__(self, key: int) -> TranscriptionWordType: ...
+    @overload
+    def __getitem__(self, key: tuple[int, int]) -> TranscriptionWordType: ...
+    @overload
+    def __getitem__(self, key: slice) -> Sequence[Sequence[TranscriptionWordType]]: ...
+    def __getitem__(self, key: int|tuple[int, int]|slice) -> TranscriptionWordType|Sequence[Sequence[TranscriptionWordType]]:
         if isinstance(key, int):
             i, j = self._item_index_map.one2two[key]
             return self.lines[i][j]
@@ -200,16 +211,18 @@ class MultilineSubtitleChunk(SubtitleChunkBase):
                 groups.setdefault(i, []).append(j)
             return [[self.lines[i][j] for j in sorted(group)] for i, group in sorted(groups.items())]
     def __setitem__(self,
-        key: int|tuple[int, int]|IntSlice,
-        value: TranscriptionWordType|Sequence[TranscriptionWordType]|Sequence[Sequence[TranscriptionWordType]],
+        key: int|tuple[int, int]|slice,
+        value: TranscriptionWordType|Sequence[TranscriptionWordType],
     ):
-        if isinstance(key, (int, tuple)) and not isinstance(value, TranscriptionWordType):
-            raise TypeError("value must be a TranscriptionWordType when key is an int or tuple")
-        if isinstance(key, int):
-            i, j = self._item_index_map.one2two[key]
-            self.lines[i][j] = value
-        if isinstance(key, tuple):
-            self.lines[key[0]][key[1]] = value
+        if isinstance(key, (int, tuple)):
+            if isinstance(value, TranscriptionWordType):
+                if isinstance(key, int):
+                    i, j = self._item_index_map.one2two[key]
+                    self.lines[i][j] = value
+                if isinstance(key, tuple):
+                    self.lines[key[0]][key[1]] = value
+            else:
+                raise TypeError("value must be a TranscriptionWordType when key is an int or tuple")
         if isinstance(key, slice):
             coords = self._item_index_map.one2two[key]
             if isinstance(value, Sequence):
@@ -236,7 +249,7 @@ class MultilineSubtitleChunk(SubtitleChunkBase):
         self.start = self.lines[0].items[0].start
         self.end = self.lines[-1].items[-1].end
 
-    def __delitem__(self, key: int|IntSlice):
+    def __delitem__(self, key: int|slice):
         if isinstance(key, int):
             coords = [self._item_index_map.one2two[key]]
         elif isinstance(key, tuple):
