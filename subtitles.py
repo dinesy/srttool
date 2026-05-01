@@ -21,14 +21,14 @@ from pydantic import (
 
 from transcribe import TranscriptionResult, TranscriptionSegment, TranscriptionWordType, TranscriptionWord, TranscriptionBlank
 
-class SubtitleProcessor[**P](ABC):
+class SubtitleProcessor[**P, T](ABC):
     @abstractmethod
     def test(self, *args: P.args, **kwargs: P.kwargs) -> bool: ...
 
     @abstractmethod
-    def action(self, *args: P.args, **kwargs: P.kwargs) -> Sequence[TranscriptionWordType]: ...
+    def action(self, *args: P.args, **kwargs: P.kwargs) -> Sequence[T]: ...
 
-    def transform_words(self, words: Iterable[TranscriptionWordType]) -> Generator[TranscriptionWordType]:
+    def transform_words(self, words: Iterable[T]) -> Generator[T]:
         argcount = self.test.__func__.__code__.co_argcount-1
         if argcount != self.action.__func__.__code__.co_argcount-1:
             raise ValueError(f"test and action methods must have the same number of arguments: {argcount-1} != {self.action.__func__.__code__.co_argcount-1}")
@@ -38,8 +38,8 @@ class SubtitleProcessor[**P](ABC):
             try:
                 while len(current_words) < argcount:
                     current_words.append(next(iwords))
-                if self.test(*current_words):
-                    result = self.action(*current_words)
+                if self.test(*current_words): #pyright: ignore[reportCallIssue]
+                    result = self.action(*current_words) #pyright: ignore[reportCallIssue]
                     current_words.clear()
                     current_words.extend(result)
                     if len(current_words) < argcount:
@@ -49,7 +49,7 @@ class SubtitleProcessor[**P](ABC):
                 yield from current_words
                 break
 
-    def transform_words_inplace(self, words: MutableSequence[TranscriptionWordType]):
+    def transform_words_inplace(self, words: MutableSequence[T]):
         argcount = self.test.__func__.__code__.co_argcount-1
         if argcount != self.action.__func__.__code__.co_argcount-1:
             raise ValueError(f"test and action methods must have the same number of arguments: {argcount-1} != {self.action.__func__.__code__.co_argcount-1}")
@@ -58,8 +58,8 @@ class SubtitleProcessor[**P](ABC):
         while j < len(words):
             if last_word is not words[j]:
                 # protect against infinite loops (hopefully)
-                if self.test(*words[i:j+1]):
-                    result = self.action(*words[i:j+1])
+                if self.test(*words[i:j+1]): #pyright: ignore[reportCallIssue]
+                    result = self.action(*words[i:j+1]) #pyright: ignore[reportCallIssue]
                     words[i:j+1] = result
                     if len(result) < argcount:
                         continue
@@ -72,7 +72,7 @@ class StripWords(SubtitleProcessor[[TranscriptionWordType], TranscriptionWordTyp
     def action(self, word_1: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
         return [word_1.model_copy(update={"word": word_1.word.strip()})]
 
-class FixCommaNumbers(SubtitleProcessor):
+class FixCommaNumbers(SubtitleProcessor[[TranscriptionWordType, TranscriptionWordType], TranscriptionWordType]):
     rx1a: re.Pattern = re.compile(r"\d+,$")
     rx1b: re.Pattern = re.compile(r"^\d+")
     rx2a: re.Pattern = re.compile(r"\d+$")
@@ -93,13 +93,13 @@ class SubtitleChunkBase(BaseModel):
     start: float
     end: float
 class SubtitleChunk(SubtitleChunkBase):
-    items: Sequence[TranscriptionWordType]
+    items: MutableSequence[TranscriptionWordType]
     @classmethod
-    def with_items(cls, items: Sequence[TranscriptionWordType]):
+    def with_items(cls, items: MutableSequence[TranscriptionWordType]):
         starts, ends = zip(*[(item.start, item.end) for item in items])
         return cls(start=min(starts), end=max(ends), items=items)
     @property
-    def words(self) -> Sequence[TranscriptionWord]:
+    def words(self) -> MutableSequence[TranscriptionWord]:
         return [word for word in self.items if isinstance(word, TranscriptionWord)]
     def __getitem__(self, item):
         return self.items[item]
@@ -107,7 +107,7 @@ class SubtitleChunk(SubtitleChunkBase):
 class MultilineSubtitleChunk(SubtitleChunkBase):
     lines: Sequence[SubtitleChunk]
     @classmethod
-    def with_chunks(cls, chunks: Sequence[SubtitleChunk]):
+    def with_chunks(cls, chunks: MutableSequence[SubtitleChunk]):
         starts, ends = zip(*[(chunk.start, chunk.end) for chunk in chunks])
         return cls(start=min(starts), end=max(ends), lines=chunks)
 
