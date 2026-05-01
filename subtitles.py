@@ -66,12 +66,10 @@ class SubtitleProcessor[**P](ABC):
             last_word = words[j]
             i, j = i+1, j+1
 
-class StripWords(SubtitleProcessor):
-    @classmethod
-    def test(cls, word_1: TranscriptionWordType) -> bool:
+class StripWords(SubtitleProcessor[[TranscriptionWordType], TranscriptionWordType]):
+    def test(self, word_1: TranscriptionWordType) -> bool:
         return True
-    @classmethod
-    def action(cls, word_1: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
+    def action(self, word_1: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
         return [word_1.model_copy(update={"word": word_1.word.strip()})]
 
 class FixCommaNumbers(SubtitleProcessor):
@@ -80,15 +78,13 @@ class FixCommaNumbers(SubtitleProcessor):
     rx2a: re.Pattern = re.compile(r"\d+$")
     rx2b: re.Pattern = re.compile(r"^,\d+")
 
-    @classmethod
-    def test(cls, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> bool:
+    def test(self, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> bool:
         return bool(
-            (cls.rx1a.search(word_1.word) and cls.rx1b.search(word_2.word)) or \
-            (cls.rx2a.search(word_1.word) and cls.rx2b.search(word_2.word))
+            (self.rx1a.search(word_1.word) and self.rx1b.search(word_2.word)) or \
+            (self.rx2a.search(word_1.word) and self.rx2b.search(word_2.word))
         )
 
-    @classmethod
-    def action(cls, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
+    def action(self, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
         return [word_1 + word_2]
 
 
