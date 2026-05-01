@@ -2,7 +2,7 @@ import re
 import sys
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 import configparser
-from dataclasses import dataclass, field, asdict
+from dataclasses import field, asdict
 from datetime import date, datetime, time, timedelta
 from itertools import pairwise
 from typing import runtime_checkable, ClassVar, NamedTuple, Protocol, Self, TextIO, TypeVar
@@ -11,6 +11,14 @@ from abc import abstractclassmethod, abstractmethod
 
 from subtitles import SubtitleChunk, MultilineSubtitleChunk
 from transcribe import TranscriptionWord
+
+from pydantic import (
+    ConfigDict
+)
+from pydantic.dataclasses import (
+    dataclass,
+    Field,
+)
 
 @dataclass(frozen=True, slots=True)
 class Timecode:
@@ -310,8 +318,8 @@ class SRTSubtitleFile(SubtitleFile[SRTSubtitleEntry]):
                 print(entry.text, file=buffer)
             print("", file=buffer)
 
-@dataclass
-class AssFile:
+@dataclass(config = ConfigDict(arbitrary_types_allowed=True))
+class AssFile(SubtitleFile[AssEntry]):
     property_name_map: ClassVar[tuple[tuple[str, str], ...]] = (
         ("effect", "Effect"),
         ("layer", "Layer"),
@@ -340,6 +348,11 @@ class AssFile:
     }
     config: dict|configparser.ConfigParser|None = None
     entries: Iterable[AssEntry]|None = field(default_factory=list)
+
+    @classmethod
+    def from_subtitles(cls, chunks: Iterator[Chunk], highlight_tag: HighlightTag|None = None) -> Self:
+        subtitles = cls.parse_subtitles(chunks, highlight_tag)
+        return cls([AssEntry(**asdict(sub)) for sub in subtitles])
 
     class AppendDict(dict):
         def __setitem__(self, key, val):
@@ -386,14 +399,14 @@ class AssFile:
                         if highlight_end is not None:
                             word = text[highlight_start+len(highlight_tag.open):highlight_end]
                             new_text = text[:highlight_start] + word + text[highlight_end+len(highlight_tag.close):]
-                            return AssEntry(**properties, text=new_text)#, highlight_word=word, highlight_idx=highlight_start)
+                            return AssEntry(**properties, text=new_text, highlight_word=word, highlight_idx=highlight_start)
                 elif isinstance(highlight_tag, re.Pattern):
                     if {"open", "close", "word"} - highlight_tag.groupindex.keys():
                         raise ValueError("RegEx must have groups for 'open', 'close', and 'word'")
                     srch = highlight_tag.search(text)
                     if srch:
                         new_text = text[:srch.start()] + srch["word"] + text[srch.end():]
-                        return AssEntry(**properties, text=new_text)#, highlight_word=srch["word"], highlight_idx=srch.start())
+                        return AssEntry(**properties, text=new_text, highlight_word=srch["word"], highlight_idx=srch.start())
                     # else:
                     #     num = properties["number"]
                     #     tm = properties["time_range"]
@@ -409,9 +422,9 @@ class AssFile:
                 start_times.add(entry.time_range[0])
                 yield entry
 
-    def dump_ass(self, buffer: TextIO, highlight_tag: HighlightTag|None = None):
+    def dump_ass(self, buffer: TextIO|None = None, highlight_tag: HighlightTag|None = None):
         print("[Script Info]", file=buffer)
-        print("; comments go here", file=buffer)
+        print("; Dines' Subtitle Writer Script", file=buffer)
         config = self.config or self.default_config
         if "Script Info" in config:
             for key, val in config["Script Info"].items():
@@ -427,14 +440,19 @@ class AssFile:
             print(f"Format: {config['Events']['Format'][0]}", file=buffer)
         fmt_keys = config["Events"]["Format"][0].split(", ")
         key_map = {key2: key1 for key1, key2 in self.property_name_map}
-        for entry in self.entries:
-            vals = {key: getattr(entry, key_map[key]) for key in fmt_keys if key in key_map}
-            vals["Start"] = str(entry.time_range[0])
-            vals["End"] = str(entry.time_range[1])
-            if None not in (highlight_tag, entry.highlight_word, entry.highlight_idx):
-                before, word, after = entry.text_parts
-                vals["Text"] = f"{before}{highlight_tag.open}{word}{highlight_tag.close}{after}"
-            else:
-                vals["Text"] = entry.text
-            vals = [vals[key] for key in fmt_keys]
-            print(f"Dialogue: {','.join(vals)}", file=buffer)
+        try:
+            old_sep = Timecode._milli_sep
+            Timecode._milli_sep = "."
+            for entry in self.entries:
+                vals = {key: str(getattr(entry, key_map[key])) for key in fmt_keys if key in key_map}
+                vals["Start"] = str(entry.time_range[0])
+                vals["End"] = str(entry.time_range[1])
+                if None not in (highlight_tag, entry.highlight_word, entry.highlight_idx):
+                    before, word, after = entry.text_parts
+                    vals["Text"] = f"{before}{highlight_tag.open}{word}{highlight_tag.close}{after}"
+                else:
+                    vals["Text"] = entry.text
+                vals = [vals[key] for key in fmt_keys]
+                print(f"Dialogue: {','.join(vals)}", file=buffer)
+        finally:
+            Timecode._milli_sep = old_sep
