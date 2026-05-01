@@ -190,11 +190,11 @@ class SRTSubtitleFile:
     entries: Iterable[SRTSubtitleEntry]
 
     @classmethod
-    def from_whisper(cls, chunks: Iterator[Chunk], highlight_tag: HighlightTag|None = None) -> Self:
-        return cls(list(cls.parse_whisper(chunks, highlight_tag)))
+    def from_subtitles(cls, chunks: Iterator[Chunk], highlight_tag: HighlightTag|None = None) -> Self:
+        return cls(list(cls.parse_subtitles(chunks, highlight_tag)))
 
     @staticmethod
-    def parse_whisper(
+    def parse_subtitles(
         chunks: Iterator[Chunk],
         highlight_tag: HighlightTag|None = None,
     ) -> Generator[SRTSubtitleEntry]:
