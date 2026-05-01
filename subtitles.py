@@ -19,16 +19,9 @@ from pydantic import (
     model_validator,
 )
 
-# from subtitlewriter import Timecode, SubtitleEntry, AssEntry, SubtitleFile, AssFile
 from transcribe import TranscriptionResult, TranscriptionSegment, TranscriptionWordType, TranscriptionWord, TranscriptionBlank
 
-# P = ParamSpec("P")
-# R = TypeVar("R", bound=bool)
-# S = TypeVar("S", bound=Iterable[TranscriptionWord])
-# class SubtitleProcessor(ABC, Generic[P, R, S]):
-# type T = TranscriptionWord
 class SubtitleProcessor[**P](ABC):
-# class SubtitleProcessor[*Ts, **P = [tuple[*Ts]]](ABC):
     @abstractmethod
     def test(self, *args: P.args, **kwargs: P.kwargs) -> bool: ...
 
@@ -97,8 +90,6 @@ class FixCommaNumbers(SubtitleProcessor):
     @classmethod
     def action(cls, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
         return [word_1 + word_2]
-    # def fix_comma_numbers(cls, ):
-        # yield from cls.process_words(words, test, lambda w1, w2: [w1 + w2])
 
 
 class SubtitleChunkBase(BaseModel):
