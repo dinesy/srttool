@@ -88,6 +88,58 @@ class FixCommaNumbers(SubtitleProcessor[[TranscriptionWordType, TranscriptionWor
     def action(self, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
         return [word_1 + word_2]
 
+@dataclass
+class RemoveWordGaps(SubtitleProcessor[[TranscriptionWordType, TranscriptionWordType], TranscriptionWordType]):
+    max_gap_threshold: float = 0.0
+    extend_by: float|None = None
+    extend_highlights: bool = True
+
+    def test(self, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> bool:
+        return word_2.start - word_1.end >= self.max_gap_threshold
+
+    def action(self, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
+        if self.extend_by is None:
+            new_end = word_2.start
+        else:
+            new_end = word_1.end + self.extend_by
+        if self.extend_highlights:
+            return [word_1.model_copy(update={"end": new_end}), word_2]
+        else:
+            return [word_1, TranscriptionBlank(start=word_1.end, end=new_end), word_2]
+
+type ChunkType = SubtitleChunk|MultilineSubtitleChunk
+@dataclass
+class RemoveChunkGaps(SubtitleProcessor[[ChunkType, ChunkType], ChunkType]):
+    max_gap_threshold: float = 0.0
+    extend_by: float|None = None
+    extend_highlights: bool = True
+
+    def test(self, chunk_1: ChunkType, chunk_2: ChunkType) -> bool:
+        return chunk_2[0].start - chunk_1[-1].end >= self.max_gap_threshold
+
+    def action(self, chunk_1: ChunkType, chunk_2: ChunkType) -> Sequence[ChunkType]:
+        if self.extend_by is None:
+            new_end = chunk_2[0].start
+        else:
+            new_end = chunk_1[-1].end + self.extend_by
+        if self.extend_highlights:
+            chunk_1[-1] = chunk_1[-1].model_copy(update={"end": new_end})
+        else:
+            blank = TranscriptionBlank(start=chunk_1.end, end=new_end)
+            chunk_1[-1:] = [chunk_1[-1], blank]
+        chunk_1.end = max(chunk_1.end, chunk_1[-1].end)
+        return [chunk_1, chunk_2]
+
+class ExtendTrailingWords(SubtitleProcessor[[TranscriptionWordType, TranscriptionWordType], TranscriptionWordType]):
+    def __init__(self, min_gap_threshold: float, extend_by: float):
+        self._min_gap_threshold: float = min_gap_threshold
+        self._extend_by: float = extend_by
+
+    def test(self, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> bool:
+        return word_2.start - word_1.end >= self._min_gap_threshold
+
+    def action(self, word_1: TranscriptionWordType, word_2: TranscriptionWordType) -> Sequence[TranscriptionWordType]:
+        return [word_1.model_copy(update={"end": word_1.end+self._extend_by}), word_2]
 
 class SubtitleChunkBase(BaseModel):
     id: int = 0
